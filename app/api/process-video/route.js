@@ -4,42 +4,48 @@ import { NextResponse } from "next/server";
 export async function POST(req) {
   try {
     const body = await req.json();
+    const { url, trim } = body;
 
     const workerUrl =
       process.env.NEXT_PUBLIC_WORKER_URL || "https://clipscut-worker.onrender.com";
 
-    console.log(`[PROXY] Sending request to: ${workerUrl}/process-video`);
+    // Format request payload to match Render index.js requirements
+    const payload = {
+      videoUrl: url,
+      startTime: trim?.start || "00:00:00",
+      endTime: trim?.end || "00:00:10",
+    };
 
-    const response = await fetch(`${workerUrl}/process-video`, {
+    console.log(`[PROXY] Sending request to: ${workerUrl}/api/process`);
+
+    // Fetch from Render's /api/process endpoint
+    const response = await fetch(`${workerUrl}/api/process`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
 
-    // Read response as plain text first to check if it's HTML or JSON
-    const rawText = await response.text();
-
     if (!response.ok) {
-      console.error("[RENDER ERROR RESPONSE]:", rawText);
+      const errorText = await response.text();
+      console.error("[RENDER ERROR]:", errorText);
       return NextResponse.json(
-        { error: `Render worker returned HTTP ${response.status}. Check terminal logs for full HTML/error details.` },
+        { error: `Render processing failed with HTTP ${response.status}` },
         { status: response.status }
       );
     }
 
-    // Try parsing as JSON only if response was successful
-    try {
-      const data = JSON.parse(rawText);
-      return NextResponse.json(data);
-    } catch (parseError) {
-      console.error("[JSON PARSE ERROR] Raw output was:", rawText);
-      return NextResponse.json(
-        { error: "Render returned non-JSON output (likely an HTML error page)." },
-        { status: 500 }
-      );
-    }
+    // Convert video binary stream from Render into a blob to send back to UI
+    const videoBuffer = await response.arrayBuffer();
+
+    return new NextResponse(videoBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Disposition": 'attachment; filename="trimmed_video.mp4"',
+      },
+    });
   } catch (err) {
-    console.error("[API PROCESS ERROR]:", err);
+    console.error("[NEXT PROXY ERROR]:", err);
     return NextResponse.json(
       { error: err.message || "Failed to reach processing worker." },
       { status: 500 }
